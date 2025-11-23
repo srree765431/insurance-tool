@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 保險分析助理系統 (Powered by Gemini)</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- PDF.js for PDF Parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        window.setupPdfWorker = function() {
+            if (window.pdfjsLib && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            }
+        }
+    </script>
+
+    <!-- Markdown Parser for AI Responses -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/markdown-it/13.0.1/markdown-it.min.js"></script>
+
+    <!-- SheetJS for Excel Parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f0f4f8; }
+        .fade-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Chat Bubble Styles */
+        .chat-bubble { max-width: 85%; padding: 12px 16px; border-radius: 16px; margin-bottom: 12px; line-height: 1.6; font-size: 0.95rem; position: relative; }
+        .chat-user { background-color: #3b82f6; color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .chat-ai { background-color: #ffffff; color: #1f2937; align-self: flex-start; border-bottom-left-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 1px solid #e5e7eb; }
+        
+        /* Markdown Styles inside chat */
+        .prose ul { list-style-type: disc; padding-left: 1.2em; margin-top: 0.5em; margin-bottom: 0.5em; }
+        .prose ol { list-style-type: decimal; padding-left: 1.2em; margin-top: 0.5em; margin-bottom: 0.5em; }
+        .prose strong { font-weight: 700; color: inherit; }
+        .prose p { margin-bottom: 0.5em; }
+        .prose p:last-child { margin-bottom: 0; }
+
+        .typing-indicator span { display: inline-block; width: 6px; height: 6px; background-color: #9ca3af; border-radius: 50%; animation: bounce 1.4s infinite ease-in-out both; margin: 0 2px; }
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const md = window.markdownit();
+
+        // ============================================================================
+        // ★★★ 免輸入設定區 ★★★
+        // 如果您不想每次都輸入 Key，請將您的 API Key 填入下方的雙引號中
+        // 例如：const PRE_CONFIGURED_API_KEY = "AIzaSyD......";
+        // ============================================================================
+        const PRE_CONFIGURED_API_KEY = "AIzaSyCM4aoYyockMZo_vftssy5P9AnJYh798yw"; 
+        // ============================================================================
+
+        // --- ICONS ---
+        const Icons = {
+            Robot: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/><path d="m9 9-3 3 3 3"/></svg>,
+            Send: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>,
+            Upload: () => <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+            Settings: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>,
+            Key: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/><path d="M6.24 17.4a5.05 5.05 0 0 0 1.54-1.54"/></svg>,
+            Refresh: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>,
+            FileText: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>,
+            Calculator: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>,
+            Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-500"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>,
+            Users: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-600"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+            CheckCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-500"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        };
+
+        // --- GEMINI API HANDLER ---
+        const GeminiService = {
+            generateContent: async (apiKey, prompt) => {
+                if (!apiKey) throw new Error("請先設定 API Key");
+                
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }]
+                };
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || "API 呼叫失敗");
+                }
+
+                const data = await response.json();
+                return data.candidates?.[0]?.content?.parts?.[0]?.text || "無法產生回應";
+            }
+        };
+
+        // --- APP COMPONENT ---
+        function App() {
+            const [activeTab, setActiveTab] = useState('ai'); // 'ai' or 'calc'
+            // 優先使用 PRE_CONFIGURED_API_KEY，其次是 localStorage
+            const [apiKey, setApiKey] = useState(PRE_CONFIGURED_API_KEY || localStorage.getItem('gemini_api_key') || '');
+            const [showSettings, setShowSettings] = useState(!apiKey && !PRE_CONFIGURED_API_KEY);
+
+            const saveApiKey = (key) => {
+                setApiKey(key);
+                localStorage.setItem('gemini_api_key', key);
+                setShowSettings(false);
+            };
+
+            useEffect(() => {
+                if (window.setupPdfWorker) window.setupPdfWorker();
+            }, []);
+
+            return (
+                <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-800">
+                    {/* Navbar */}
+                    <header className="bg-white shadow-sm sticky top-0 z-50">
+                        <div className="max-w-6xl mx-auto px-4 h-16 flex justify-between items-center">
+                            <div className="flex items-center gap-2 text-blue-700">
+                                <Icons.Robot />
+                                <h1 className="font-bold text-lg tracking-tight">AI 保險分析助理</h1>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <button 
+                                    onClick={() => setShowSettings(!showSettings)}
+                                    className={`p-2 rounded-full transition-colors ${!apiKey ? 'bg-red-100 text-red-600 animate-pulse' : 'hover:bg-slate-100 text-slate-600'}`}
+                                    title="設定 API Key"
+                                >
+                                    <Icons.Settings />
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Settings Modal */}
+                    {showSettings && (
+                        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 fade-in">
+                            <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                                    <Icons.Key /> 設定 AI 金鑰
+                                </h3>
+                                <p className="text-sm text-slate-500 mb-4">
+                                    本系統使用 Google Gemini 模型來閱讀您的保險 DM。
+                                    請輸入您的 API Key 以啟用完整 AI 功能。
+                                    <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-600 underline ml-1">取得免費 Key</a>
+                                </p>
+                                <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg mb-4 text-xs text-yellow-800">
+                                    <strong>小撇步：</strong> 如果不想每次輸入，可用記事本開啟此 HTML 檔，搜尋 <code>PRE_CONFIGURED_API_KEY</code> 並填入您的 Key。
+                                </div>
+                                <input 
+                                    type="password" 
+                                    placeholder="貼上您的 Google API Key (AIza...)" 
+                                    className="w-full p-3 border border-slate-300 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
+                                    defaultValue={apiKey}
+                                    onChange={(e) => setApiKey(e.target.value)}
+                                />
+                                <div className="flex justify-end gap-2">
+                                    <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">稍後設定</button>
+                                    <button onClick={() => saveApiKey(apiKey)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">儲存並啟用</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Main Content */}
+                    <main className="flex-1 max-w-6xl mx-auto w-full p-4 pb-24 md:pb-6">
+                        {activeTab === 'ai' ? <AIAssistant apiKey={apiKey} openSettings={() => setShowSettings(true)} /> : <ProposalCalculator />}
+                    </main>
+
+                    {/* Mobile Tab Bar */}
+                    <div className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-200 flex justify-around p-3 z-40">
+                        <button onClick={() => setActiveTab('ai')} className={`flex flex-col items-center gap-1 text-xs ${activeTab === 'ai' ? 'text-blue-600 font-bold' : 'text-slate-400'}`}>
+                            <Icons.Robot /> AI 助理
+                        </button>
+                        <button onClick={() => setActiveTab('calc')} className={`flex flex-col items-center gap-1 text-xs ${activeTab === 'calc' ? 'text-blue-600 font-bold' : 'text-slate-400'}`}>
+                            <Icons.Calculator /> 保費試算
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        // --- FEATURE 1: AI ASSISTANT ---
+        function AIAssistant({ apiKey, openSettings }) {
+            const [dmText, setDmText] = useState('');
+            const [fileName, setFileName] = useState('');
+            
+            // Data States
+            const [fabAnalysis, setFabAnalysis] = useState(null); // Stores JSON object of FABs
+            const [generatedScript, setGeneratedScript] = useState('');
+            const [chatHistory, setChatHistory] = useState([]);
+            
+            // UI States
+            const [userInput, setUserInput] = useState('');
+            const [isProcessingFile, setIsProcessingFile] = useState(false);
+            const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+            const [isChatLoading, setIsChatLoading] = useState(false);
+            const [targetAudience, setTargetAudience] = useState('family'); // Default audience
+
+            const fileInputRef = useRef(null);
+            const chatEndRef = useRef(null);
+
+            const scrollToBottom = () => {
+                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
+
+            useEffect(scrollToBottom, [chatHistory]);
+
+            const handleFileUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                setFileName(file.name);
+                setIsProcessingFile(true);
+                setDmText('');
+                setFabAnalysis(null);
+                setGeneratedScript('');
+                setChatHistory([]); 
+
+                try {
+                    // 1. Read PDF
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    let fullText = '';
+                    const maxPages = Math.min(pdf.numPages, 12); 
+                    for (let i = 1; i <= maxPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const textContent = await page.getTextContent();
+                        fullText += textContent.items.map(item => item.str).join(' ') + '\n';
+                    }
+                    
+                    fullText = fullText.replace(/[\x00-\x1F\x7F-\x9F]/g, "");
+                    if (!fullText.trim()) throw new Error("無法提取文字，可能是圖片檔");
+                    
+                    setDmText(fullText);
+                    
+                    // 2. Analyze FAB with Gemini
+                    if (apiKey) {
+                        const fabPrompt = `
+                            你是一位專業的保險分析師。請閱讀以下保險商品 DM 內容。
+                            
+                            請以「JSON 格式」輸出分析結果，不要包含 Markdown 代碼標記 (如 \`\`\`json)。
+                            JSON 結構如下：
+                            {
+                                "productName": "商品名稱",
+                                "summary": "商品簡介 (200字內)",
+                                "fabs": [
+                                    {
+                                        "feature": "特色 (Feature)",
+                                        "advantage": "優勢 (Advantage - 用白話文解釋為什麼這個特色很好)",
+                                        "benefit": "利益 (Benefit - 對客戶的具體好處)"
+                                    }
+                                ]
+                            }
+                            
+                            要求：
+                            1. 請整理出 3 到 4 個最重要的 FAB。
+                            2. 每個欄位內容請控制在 300 字以內，保持精簡有力。
+                            3. 使用台灣繁體中文。
+                            
+                            DM 內容：
+                            ${fullText.substring(0, 20000)}
+                        `;
+                        
+                        const responseText = await GeminiService.generateContent(apiKey, fabPrompt);
+                        
+                        // Clean up response to ensure valid JSON
+                        let cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+                        try {
+                            const parsedData = JSON.parse(cleanJson);
+                            setFabAnalysis(parsedData);
+                            setChatHistory([{ role: 'ai', content: `我已經分析完 **${parsedData.productName || file.name}** 的內容囉！\n\n左側是商品的 FAB 重點整理。您可以選擇下方的「目標客群」來產生專屬話術，或是在這裡直接問我問題。` }]);
+                        } catch (e) {
+                            console.error("JSON Parse Error", e);
+                            setFabAnalysis({ productName: file.name, summary: "AI 回傳格式異常，無法自動整理表格，但您仍可使用對話功能。", fabs: [] });
+                            setChatHistory([{ role: 'ai', content: `分析資料時發生格式錯誤，但我已經讀過內容了。您可以直接問我問題！\n(原始回應: ${responseText.substring(0, 100)}...)` }]);
+                        }
+
+                    } else {
+                        setChatHistory([{ role: 'ai', content: "請先點擊右上角設定 API Key，我才能幫您分析檔案喔！" }]);
+                    }
+
+                } catch (error) {
+                    console.error(error);
+                    setChatHistory([{ role: 'ai', content: `解析失敗：${error.message}` }]);
+                } finally {
+                    setIsProcessingFile(false);
+                }
+            };
+
+            // Generate Script based on Audience
+            const handleGenerateScript = async () => {
+                if (!apiKey || !fabAnalysis) return;
+                
+                setIsGeneratingScript(true);
+                const audienceMap = {
+                    'family': '家庭支柱 (上有老下有小，擔心責任未了)',
+                    'single': '單身貴族 (擔心老後無人照顧，醫療自費)',
+                    'retiree': '退休族群 (資產傳承，醫療品質，不拖累子女)',
+                    'business': '企業主 (稅務規劃，資產保全)',
+                    'newborn': '新生兒父母 (想給孩子完整的起跑點)'
+                };
+
+                const scriptPrompt = `
+                    角色：金牌保險業務員
+                    任務：撰寫一段約訪/開門話術。
+                    
+                    商品：${fabAnalysis.productName}
+                    商品特色：${fabAnalysis.summary}
+                    FAB重點：${JSON.stringify(fabAnalysis.fabs)}
+                    
+                    目標客戶：${audienceMap[targetAudience]}
+                    
+                    撰寫要求：
+                    1. 針對該客戶類型的痛點切入。
+                    2. 連結商品的優勢作為解決方案。
+                    3. 語氣專業、親切、口語化 (台灣風格)。
+                    4. 結尾要有明確的邀約 (Call to Action)。
+                    5. 字數控制在 300 字以內。
+                    6. 不要使用 Markdown 格式，直接給純文字段落。
+                `;
+
+                try {
+                    const script = await GeminiService.generateContent(apiKey, scriptPrompt);
+                    setGeneratedScript(script);
+                } catch (e) {
+                    setGeneratedScript("生成話術時發生錯誤，請稍後再試。");
+                } finally {
+                    setIsGeneratingScript(false);
+                }
+            };
+
+            // Trigger script generation automatically when analysis is done or audience changes
+            useEffect(() => {
+                if (fabAnalysis && apiKey) {
+                    handleGenerateScript();
+                }
+            }, [fabAnalysis, targetAudience]);
+
+            const handleSendMessage = async () => {
+                if (!userInput.trim() || !apiKey) return;
+                
+                const userMsg = userInput;
+                setUserInput('');
+                setChatHistory(prev => [...prev, { role: 'user', content: userMsg }]);
+                setIsChatLoading(true);
+
+                try {
+                    const prompt = `你是一個專業保險助理。根據以下商品資料回答問題。
+                    
+                    【商品資料】：
+                    ${dmText.substring(0, 25000)}
+
+                    【使用者問題】：
+                    ${userMsg}
+                    
+                    回答原則：台灣繁體中文、專業口語。若資料未提及請誠實告知。`;
+
+                    const aiMsg = await GeminiService.generateContent(apiKey, prompt);
+                    setChatHistory(prev => [...prev, { role: 'ai', content: aiMsg }]);
+
+                } catch (error) {
+                    setChatHistory(prev => [...prev, { role: 'ai', content: `錯誤：${error.message}` }]);
+                } finally {
+                    setIsChatLoading(false);
+                }
+            };
+
+            return (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-100px)]">
+                    
+                    {/* Left Column: Analysis & Script (Scrollable) - Takes up 7 cols on LG */}
+                    <div className="lg:col-span-7 flex flex-col gap-6 h-full overflow-y-auto pr-2 pb-20">
+                        
+                        {/* 1. File Upload */}
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <div 
+                                onClick={() => fileInputRef.current.click()}
+                                className="border-2 border-dashed border-blue-300 bg-blue-50 rounded-xl p-8 text-center cursor-pointer hover:bg-blue-100 transition-colors group"
+                            >
+                                <input type="file" ref={fileInputRef} className="hidden" accept=".pdf" onChange={handleFileUpload} />
+                                <div className="flex flex-col items-center gap-3 text-blue-600 group-hover:text-blue-700">
+                                    <Icons.Upload />
+                                    <span className="font-bold text-lg">{fileName || "點擊上傳保險商品 DM (PDF)"}</span>
+                                    <span className="text-sm opacity-75">AI 將自動分析 FAB 與生成話術</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Loading State */}
+                        {isProcessingFile && (
+                            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center justify-center py-12 animate-pulse">
+                                <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+                                <p className="text-slate-500 font-medium">AI 正在閱讀條款並整理 FAB 中...</p>
+                            </div>
+                        )}
+
+                        {/* 2. FAB Analysis Result */}
+                        {fabAnalysis && !isProcessingFile && (
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 fade-in">
+                                <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+                                    <Icons.Sparkles />
+                                    <h2 className="font-bold text-xl text-slate-800">商品 FAB 重點分析</h2>
+                                </div>
+                                
+                                <div className="mb-6 bg-slate-50 p-4 rounded-lg text-slate-700 leading-relaxed text-sm">
+                                    <span className="font-bold text-slate-900 block mb-1">商品摘要：</span>
+                                    {fabAnalysis.summary}
+                                </div>
+
+                                <div className="space-y-4">
+                                    {fabAnalysis.fabs.map((item, idx) => (
+                                        <div key={idx} className="border border-slate-200 rounded-xl p-4 hover:shadow-md transition-shadow bg-white">
+                                            <div className="flex gap-3">
+                                                <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">{idx + 1}</div>
+                                                <div className="space-y-3 w-full">
+                                                    <div>
+                                                        <span className="text-xs font-bold text-blue-600 uppercase tracking-wide bg-blue-50 px-2 py-1 rounded">Feature 特色</span>
+                                                        <p className="font-bold text-slate-800 mt-1">{item.feature}</p>
+                                                    </div>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        <div className="bg-slate-50 p-3 rounded-lg">
+                                                            <span className="text-xs font-bold text-slate-500 block mb-1">Advantage 優勢</span>
+                                                            <p className="text-sm text-slate-600">{item.advantage}</p>
+                                                        </div>
+                                                        <div className="bg-green-50 p-3 rounded-lg">
+                                                            <span className="text-xs font-bold text-green-600 block mb-1">Benefit 利益</span>
+                                                            <p className="text-sm text-slate-700 font-medium">{item.benefit}</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 3. Script Generator */}
+                        {fabAnalysis && !isProcessingFile && (
+                            <div className="bg-gradient-to-br from-indigo-50 to-white p-6 rounded-2xl shadow-sm border border-indigo-100 fade-in">
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+                                    <h2 className="font-bold text-xl text-indigo-900 flex items-center gap-2">
+                                        <Icons.Users /> 分眾行銷話術
+                                    </h2>
+                                    
+                                    <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-indigo-200 shadow-sm w-full sm:w-auto">
+                                        <span className="text-xs font-bold text-indigo-500 whitespace-nowrap">對象：</span>
+                                        <select 
+                                            value={targetAudience}
+                                            onChange={(e) => setTargetAudience(e.target.value)}
+                                            className="bg-transparent text-sm font-medium text-slate-700 outline-none cursor-pointer w-full"
+                                        >
+                                            <option value="family">家庭支柱</option>
+                                            <option value="single">單身貴族</option>
+                                            <option value="retiree">退休族群</option>
+                                            <option value="business">企業主</option>
+                                            <option value="newborn">新生兒父母</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="relative min-h-[150px]">
+                                    {isGeneratingScript ? (
+                                        <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-sm rounded-xl z-10">
+                                            <div className="typing-indicator"><span></span><span></span><span></span></div>
+                                        </div>
+                                    ) : null}
+                                    
+                                    <div className="bg-white p-5 rounded-xl border border-indigo-100 text-slate-700 leading-relaxed whitespace-pre-line shadow-sm">
+                                        {generatedScript || "請選擇客戶類型以生成話術..."}
+                                    </div>
+                                </div>
+                                
+                                <div className="mt-3 flex justify-end">
+                                    <button 
+                                        onClick={() => navigator.clipboard.writeText(generatedScript)}
+                                        className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium px-3 py-1 rounded hover:bg-indigo-50 transition-colors"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                        複製話術
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Right Column: AI Chat - Takes up 5 cols on LG */}
+                    <div className="lg:col-span-5 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full overflow-hidden sticky top-24">
+                        <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                <span className="font-bold text-slate-700">AI 諮詢室</span>
+                            </div>
+                            {fileName && <span className="text-xs text-slate-400 truncate max-w-[120px]">{fileName}</span>}
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30">
+                            {chatHistory.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3 opacity-60">
+                                    <Icons.Robot />
+                                    <p className="text-sm text-center">上傳 DM 後，<br/>這裡可以問我任何條款細節。</p>
+                                </div>
+                            ) : (
+                                chatHistory.map((msg, idx) => (
+                                    <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                                        <div className={`chat-bubble ${msg.role === 'user' ? 'chat-user' : 'chat-ai'}`}>
+                                            {msg.role === 'ai' ? (
+                                                <div className="prose prose-sm max-w-none dark:prose-invert" dangerouslySetInnerHTML={{ __html: md.render(msg.content) }} />
+                                            ) : (
+                                                msg.content
+                                            )}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                            {isChatLoading && (
+                                <div className="flex flex-col items-start">
+                                    <div className="chat-bubble chat-ai">
+                                        <div className="typing-indicator"><span></span><span></span><span></span></div>
+                                    </div>
+                                </div>
+                            )}
+                            <div ref={chatEndRef} />
+                        </div>
+
+                        <div className="p-3 bg-white border-t border-slate-100">
+                            <div className="flex gap-2 relative">
+                                <input 
+                                    type="text" 
+                                    className="flex-1 bg-slate-100 border-0 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 placeholder-slate-400 text-sm"
+                                    placeholder={apiKey ? "輸入問題..." : "請先設定 API Key"}
+                                    value={userInput}
+                                    onChange={(e) => setUserInput(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                                    disabled={!apiKey || isChatLoading}
+                                />
+                                <button 
+                                    onClick={handleSendMessage}
+                                    disabled={!apiKey || isChatLoading || !userInput.trim()}
+                                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white p-3 rounded-xl transition-all shadow-md active:scale-95"
+                                >
+                                    <Icons.Send />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            );
+        }
+
+        // --- FEATURE 2: PROPOSAL CALCULATOR (Legacy Support) ---
+        function ProposalCalculator() {
+            const [formData, setFormData] = useState({ age: 30, gender: 'male', amount: 100, type: 'wholeLife' });
+            const [result, setResult] = useState(null);
+
+            const handleCalculate = () => {
+                const premium1 = calculatePremium(formData.type, formData.age, formData.gender, formData.amount);
+                setResult({ premium: premium1 });
+            };
+
+            return (
+                <div className="max-w-2xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-200 mt-8">
+                    <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                        <Icons.Calculator /> 簡易保費試算
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-600 mb-2">年齡</label>
+                            <input type="number" value={formData.age} onChange={(e) => setFormData({...formData, age: parseInt(e.target.value)})} className="w-full p-3 border rounded-xl bg-slate-50" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-600 mb-2">性別</label>
+                            <select value={formData.gender} onChange={(e) => setFormData({...formData, gender: e.target.value})} className="w-full p-3 border rounded-xl bg-slate-50">
+                                <option value="male">男性</option>
+                                <option value="female">女性</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-600 mb-2">險種</label>
+                            <select value={formData.type} onChange={(e) => setFormData({...formData, type: e.target.value})} className="w-full p-3 border rounded-xl bg-slate-50">
+                                <option value="wholeLife">終身壽險</option>
+                                <option value="termLife">定期壽險</option>
+                                <option value="ci">重大傷病</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-600 mb-2">保額 (萬元)</label>
+                            <input type="number" value={formData.amount} onChange={(e) => setFormData({...formData, amount: parseInt(e.target.value)})} className="w-full p-3 border rounded-xl bg-slate-50" />
+                        </div>
+                    </div>
+                    <button onClick={handleCalculate} className="w-full bg-slate-800 text-white py-4 rounded-xl font-bold hover:bg-slate-900 transition-all">
+                        開始計算
+                    </button>
+                    {result && (
+                        <div className="mt-6 p-6 bg-blue-50 rounded-xl text-center">
+                            <p className="text-slate-500 text-sm mb-1">預估年繳保費</p>
+                            <p className="text-3xl font-bold text-blue-700">{formatCurrency(result.premium)}</p>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
